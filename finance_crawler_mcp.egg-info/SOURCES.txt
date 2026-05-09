@@ -1,0 +1,8 @@
+pyproject.toml
+server.py
+finance_crawler_mcp.egg-info/PKG-INFO
+finance_crawler_mcp.egg-info/SOURCES.txt
+finance_crawler_mcp.egg-info/dependency_links.txt
+finance_crawler_mcp.egg-info/entry_points.txt
+finance_crawler_mcp.egg-info/requires.txt
+finance_crawler_mcp.egg-info/top_level.txt

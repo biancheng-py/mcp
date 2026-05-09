@@ -1,0 +1,10 @@
+Metadata-Version: 2.4
+Name: finance-crawler-mcp
+Version: 0.1.0
+Summary: 多源金融资讯爬虫 MCP 服务
+Requires-Python: >=3.10
+Requires-Dist: mcp
+Requires-Dist: fastmcp
+Requires-Dist: requests
+Requires-Dist: beautifulsoup4
+Requires-Dist: stock-stil
