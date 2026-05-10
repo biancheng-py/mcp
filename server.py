@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-MCP 服务：多源金融资讯采集（支持 STDIO 传输）
+MCP 服务：多源金融资讯采集（SSE 版本，适配魔搭免费托管）
 """
 
 import sys
@@ -23,7 +23,7 @@ from typing import List, Optional
 
 from fastmcp import FastMCP
 
-# 尝试导入股吧专用库，若未安装则跳过
+# 尝试导入股吧库，若未安装则自动跳过（不影响其他数据源）
 try:
     from stock_stil import comments
     STOCK_STIL_AVAILABLE = True
@@ -58,7 +58,7 @@ def clean_text(text: str) -> str:
     text = re.sub(r'\s+', ' ', text).strip()
     return text
 
-# ===================== 数据源抓取函数（同原版） =====================
+# ===================== 数据源 1：股吧评论 =====================
 def fetch_guba_posts(stock_code: str = "002455", target: int = 50) -> List[dict]:
     if not STOCK_STIL_AVAILABLE:
         print("stock_stil 未安装，跳过股吧抓取", file=sys.stderr)
@@ -89,6 +89,7 @@ def fetch_guba_posts(stock_code: str = "002455", target: int = 50) -> List[dict]
     print(f"股吧评论获取 {len(results)} 条", file=sys.stderr)
     return results
 
+# ===================== 数据源 2：个股聚焦（API + HTML 备用）=====================
 def _extract_body(url: str) -> str:
     try:
         resp = requests.get(url, headers=HEADERS_10JQKA, timeout=10)
@@ -150,6 +151,7 @@ def fetch_ggjj_news() -> list:
             full_url = url if url.startswith("http") else "https:" + url
             items.append({"title": title, "url": full_url})
         if items:
+            print(f"个股聚焦 API 获取 {len(items)} 条", file=sys.stderr)
             return _fetch_news_contents(items, "个股聚焦")
     except Exception as e:
         print(f"个股聚焦 API 失败，尝试 HTML 解析: {e}", file=sys.stderr)
@@ -171,6 +173,7 @@ def fetch_ggjj_news() -> list:
         print(f"个股聚焦 HTML 获取失败: {e}", file=sys.stderr)
     return _fetch_news_contents(items, "个股聚焦")
 
+# ===================== 数据源 3：公告速递 =====================
 def fetch_ggsd_today() -> list:
     base_url = "https://data.10jqka.com.cn/market/ggsd/"
     today_str = datetime.now().strftime("%m-%d")
@@ -211,6 +214,7 @@ def fetch_ggsd_today() -> list:
     print(f"公告速递获取 {len(unique)} 条", file=sys.stderr)
     return [{"type": "公告速递", "title": t, "content": "", "source": "同花顺公告"} for t in unique[:20]]
 
+# ===================== 数据源 4：公司资讯 =====================
 def fetch_company_news() -> list:
     list_url = "https://stock.10jqka.com.cn/companynews_list/"
     items = []
@@ -231,6 +235,7 @@ def fetch_company_news() -> list:
         return []
     return _fetch_news_contents(items, "公司资讯")
 
+# ===================== 数据源 5：近期新闻（同花顺要闻）=====================
 def fetch_recent_news(pages: int = 2) -> list:
     headers = {"User-Agent": "Mozilla/5.0"}
     all_items = []
@@ -261,6 +266,7 @@ def fetch_recent_news(pages: int = 2) -> list:
             unique.append(item)
     return unique[:100]
 
+# ===================== 邮件发送（摘要 + CSV 附件）=====================
 def send_email_with_csv_attachment(analysis_time: str, all_data: list):
     if not all_data:
         return
@@ -347,9 +353,10 @@ def crawl_recent_news(pages: int = 2) -> list:
     """单独抓取同花顺要闻"""
     return fetch_recent_news(pages)
 
+# ===================== 启动入口（SSE 模式）=====================
 def main():
-    # 显式指定 STDIO 传输，确保与魔搭托管环境兼容
-    mcp.run(transport="stdio")
+    # 显式开启 SSE 传输，监听 8000 端口，适配魔搭免费托管容器
+    mcp.run(transport="sse", host="0.0.0.0", port=8000)
 
 if __name__ == "__main__":
     main()
