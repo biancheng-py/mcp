@@ -2,7 +2,14 @@
 
 多源金融资讯采集工具
 
-## 安装依赖
+## MCP 服务配置
 
-```bash
-pip install -r requirements.txt
+```json
+{
+  "mcpServers": {
+    "finance-crawler-mcp": {
+      "command": "finance-crawler-mcp",
+      "args": []
+    }
+  }
+}
