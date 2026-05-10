@@ -1,7 +1,7 @@
 [project]
 name = "finance-crawler-mcp"
 version = "0.1.0"
-description = "多源金融资讯爬虫 MCP 服务"
+description = "多源金融资讯 MCP 服务"
 requires-python = ">=3.10"
 dependencies = [
     "fastmcp",

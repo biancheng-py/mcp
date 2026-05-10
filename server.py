@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-MCP 服务：多源金融资讯采集（支持邮件附件）
+MCP 服务：多源金融资讯采集（支持 STDIO 传输）
 """
+
 import sys
 import json
 import time
@@ -39,11 +40,10 @@ HEADERS_10JQKA = {
     "Referer": "https://stock.10jqka.com.cn/",
 }
 
-# ===================== 邮箱配置（保持原样）=====================
 SMTP_SERVER = "smtp.163.com"
 SMTP_PORT = 465
 SENDER_EMAIL = "m13956155221_1@163.com"
-AUTH_CODE = "JEYLKpUU3pthEddH"
+AUTH_CODE = "JEYLKpUU3pthEddH"          # 建议改用环境变量
 RECEIVER_EMAILS = [
     "kellybian89@163.com",
     "1239601342@qq.com"
@@ -58,10 +58,10 @@ def clean_text(text: str) -> str:
     text = re.sub(r'\s+', ' ', text).strip()
     return text
 
-# ===================== 数据源 1：股吧评论 =====================
+# ===================== 数据源抓取函数（同原版） =====================
 def fetch_guba_posts(stock_code: str = "002455", target: int = 50) -> List[dict]:
     if not STOCK_STIL_AVAILABLE:
-        print("stock_stil 不可用，跳过股吧抓取", file=sys.stderr)
+        print("stock_stil 未安装，跳过股吧抓取", file=sys.stderr)
         return []
     try:
         post_list = comments.getEastMoneyPostList(stock_code=stock_code)
@@ -89,7 +89,6 @@ def fetch_guba_posts(stock_code: str = "002455", target: int = 50) -> List[dict]
     print(f"股吧评论获取 {len(results)} 条", file=sys.stderr)
     return results
 
-# ===================== 数据源 2：个股聚焦 =====================
 def _extract_body(url: str) -> str:
     try:
         resp = requests.get(url, headers=HEADERS_10JQKA, timeout=10)
@@ -151,7 +150,6 @@ def fetch_ggjj_news() -> list:
             full_url = url if url.startswith("http") else "https:" + url
             items.append({"title": title, "url": full_url})
         if items:
-            print(f"个股聚焦 API 获取 {len(items)} 条", file=sys.stderr)
             return _fetch_news_contents(items, "个股聚焦")
     except Exception as e:
         print(f"个股聚焦 API 失败，尝试 HTML 解析: {e}", file=sys.stderr)
@@ -173,7 +171,6 @@ def fetch_ggjj_news() -> list:
         print(f"个股聚焦 HTML 获取失败: {e}", file=sys.stderr)
     return _fetch_news_contents(items, "个股聚焦")
 
-# ===================== 数据源 3：公告速递 =====================
 def fetch_ggsd_today() -> list:
     base_url = "https://data.10jqka.com.cn/market/ggsd/"
     today_str = datetime.now().strftime("%m-%d")
@@ -214,7 +211,6 @@ def fetch_ggsd_today() -> list:
     print(f"公告速递获取 {len(unique)} 条", file=sys.stderr)
     return [{"type": "公告速递", "title": t, "content": "", "source": "同花顺公告"} for t in unique[:20]]
 
-# ===================== 数据源 4：公司资讯 =====================
 def fetch_company_news() -> list:
     list_url = "https://stock.10jqka.com.cn/companynews_list/"
     items = []
@@ -235,7 +231,6 @@ def fetch_company_news() -> list:
         return []
     return _fetch_news_contents(items, "公司资讯")
 
-# ===================== 数据源 5：近期新闻（同花顺要闻） =====================
 def fetch_recent_news(pages: int = 2) -> list:
     headers = {"User-Agent": "Mozilla/5.0"}
     all_items = []
@@ -266,7 +261,6 @@ def fetch_recent_news(pages: int = 2) -> list:
             unique.append(item)
     return unique[:100]
 
-# ===================== 邮件发送（摘要邮件 + CSV 附件） =====================
 def send_email_with_csv_attachment(analysis_time: str, all_data: list):
     if not all_data:
         return
@@ -290,26 +284,8 @@ def send_email_with_csv_attachment(analysis_time: str, all_data: list):
             lines.append(f"<li><b>{title}</b> —— {snippet}</li>")
         lines.append("</ul>")
     html_body = f"""
-    <html>
-    <head><style>
-        body {{ font-family: 'Microsoft YaHei', Arial; }}
-        h2 {{ color: #2c3e50; }}
-        h3 {{ color: #27ae60; }}
-        ul {{ list-style: none; padding: 0; }}
-        li {{ margin: 5px 0; }}
-        .footer {{ margin-top: 30px; font-size: 12px; color: #7f8c8d; }}
-    </style></head>
-    <body>
-        <h2>📊 多源金融资讯采集报告</h2>
-        <p><strong>生成时间：</strong> {analysis_time}</p>
-        {''.join(lines)}
-        <div class="footer">
-            <p>完整数据见附件 <b>financial_news.csv</b></p>
-            <p>此邮件由自动化系统生成，仅供参考</p>
-        </div>
-    </body>
-    </html>
-    """
+    <html><head><style>body{{font-family:'Microsoft YaHei',Arial;}}h2{{color:#2c3e50;}}h3{{color:#27ae60;}}ul{{list-style:none;padding:0;}}li{{margin:5px 0;}}.footer{{margin-top:30px;font-size:12px;color:#7f8c8d;}}</style></head>
+    <body><h2>📊 多源金融资讯采集报告</h2><p><strong>生成时间：</strong> {analysis_time}</p>{''.join(lines)}<div class="footer"><p>完整数据见附件 <b>financial_news.csv</b></p><p>此邮件由自动化系统生成，仅供参考</p></div></body></html>"""
     fieldnames = ["type", "title", "content", "url", "publish_time", "source", "post_id"]
     output = io.StringIO()
     output.write('\ufeff')
@@ -372,7 +348,8 @@ def crawl_recent_news(pages: int = 2) -> list:
     return fetch_recent_news(pages)
 
 def main():
-    mcp.run()
+    # 显式指定 STDIO 传输，确保与魔搭托管环境兼容
+    mcp.run(transport="stdio")
 
 if __name__ == "__main__":
     main()
