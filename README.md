@@ -2,14 +2,14 @@
 
 多源金融资讯采集工具
 
-## MCP 服务配置
+## ModelScope 托管部署 JSON
 
 ```json
 {
   "mcpServers": {
     "finance-crawler-mcp": {
-      "command": "finance-crawler-mcp",
-      "args": []
+      "command": "python",
+      "args": ["-m", "finance-crawler-mcp"]
     }
   }
 }
