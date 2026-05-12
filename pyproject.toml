@@ -1,10 +1,15 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "finance-crawler-mcp"
 version = "0.1.0"
 description = "多源金融资讯 MCP 服务"
+readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "fastmcp",
+    "mcp>=1.0.0",
     "requests",
     "beautifulsoup4",
     "stock-stil",

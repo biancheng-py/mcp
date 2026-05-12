@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """
-MCP 服务：多源金融资讯采集（SSE 版本，适配魔搭免费托管）
+MCP 服务：多源金融资讯采集（默认 STDIO，可选 SSE 本地测试）
+适配魔搭 MCP 广场托管部署要求
 """
 
 import sys
+import os
 import json
 import time
 import csv
@@ -21,7 +23,7 @@ from bs4 import BeautifulSoup
 from collections import Counter, defaultdict
 from typing import List, Optional
 
-from fastmcp import FastMCP
+from mcp.server.fastmcp import FastMCP
 
 # 尝试导入股吧库，若未安装则自动跳过（不影响其他数据源）
 try:
@@ -32,7 +34,7 @@ except ImportError:
 
 mcp = FastMCP("FinanceCrawler")
 
-# ===================== 通用配置 =====================
+# ===================== 通用配置（从环境变量读取敏感信息）=====================
 TZ_CN = timezone(timedelta(hours=8))
 HEADERS_10JQKA = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -40,14 +42,13 @@ HEADERS_10JQKA = {
     "Referer": "https://stock.10jqka.com.cn/",
 }
 
-SMTP_SERVER = "smtp.163.com"
-SMTP_PORT = 465
-SENDER_EMAIL = "m13956155221_1@163.com"
-AUTH_CODE = "JEYLKpUU3pthEddH"          # 建议改用环境变量
-RECEIVER_EMAILS = [
-    "kellybian89@163.com",
-    "1239601342@qq.com"
-]
+# 邮件配置（全部从环境变量获取，未配置则静默跳过发送）
+SENDER_EMAIL   = os.environ.get("FINANCE_SENDER_EMAIL", "")
+AUTH_CODE      = os.environ.get("FINANCE_AUTH_CODE", "")
+RECEIVER_EMAILS_STR = os.environ.get("FINANCE_RECEIVER_EMAILS", "")
+RECEIVER_EMAILS = [e.strip() for e in RECEIVER_EMAILS_STR.split(",") if e.strip()] if RECEIVER_EMAILS_STR else []
+SMTP_SERVER    = os.environ.get("FINANCE_SMTP_SERVER", "smtp.163.com")
+SMTP_PORT      = int(os.environ.get("FINANCE_SMTP_PORT", "465"))
 
 # ===================== 工具函数 =====================
 def clean_text(text: str) -> str:
@@ -89,7 +90,7 @@ def fetch_guba_posts(stock_code: str = "002455", target: int = 50) -> List[dict]
     print(f"股吧评论获取 {len(results)} 条", file=sys.stderr)
     return results
 
-# ===================== 数据源 2：个股聚焦（API + HTML 备用）=====================
+# ===================== 数据源 2：个股聚焦 =====================
 def _extract_body(url: str) -> str:
     try:
         resp = requests.get(url, headers=HEADERS_10JQKA, timeout=10)
@@ -235,7 +236,7 @@ def fetch_company_news() -> list:
         return []
     return _fetch_news_contents(items, "公司资讯")
 
-# ===================== 数据源 5：近期新闻（同花顺要闻）=====================
+# ===================== 数据源 5：近期新闻 =====================
 def fetch_recent_news(pages: int = 2) -> list:
     headers = {"User-Agent": "Mozilla/5.0"}
     all_items = []
@@ -266,10 +267,15 @@ def fetch_recent_news(pages: int = 2) -> list:
             unique.append(item)
     return unique[:100]
 
-# ===================== 邮件发送（摘要 + CSV 附件）=====================
+# ===================== 邮件发送（环境变量未配时静默跳过）=====================
 def send_email_with_csv_attachment(analysis_time: str, all_data: list):
     if not all_data:
         return
+    # 如果未配置邮件参数，直接返回（不会报错，也不阻塞）
+    if not SENDER_EMAIL or not AUTH_CODE or not RECEIVER_EMAILS:
+        print("邮件未发送：FINANCE_SENDER_EMAIL / AUTH_CODE / RECEIVER_EMAILS 未配置", file=sys.stderr)
+        return
+
     type_counts = Counter(item['type'] for item in all_data)
     lines = [f"<h3>📋 本次采集概览</h3><ul>"]
     for t, cnt in type_counts.items():
@@ -330,7 +336,7 @@ def collect_all_news(stock_code: str = "002455",
                      ggsd_count: int = 20,
                      company_count: int = 20,
                      recent_pages: int = 2) -> dict:
-    """采集五种金融资讯源，自动发送邮件报告。"""
+    """采集五种金融资讯源，自动发送邮件报告（需配置邮件环境变量）"""
     analysis_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     all_data = []
     all_data.extend(fetch_guba_posts(stock_code, guba_target))
@@ -353,10 +359,15 @@ def crawl_recent_news(pages: int = 2) -> list:
     """单独抓取同花顺要闻"""
     return fetch_recent_news(pages)
 
-# ===================== 启动入口（SSE 模式）=====================
+# ===================== 启动入口（默认 STDIO，可选 SSE 用于本地测试）=====================
 def main():
-    # 显式开启 SSE 传输，监听 8000 端口，适配魔搭免费托管容器
-    mcp.run(transport="sse", host="0.0.0.0", port=8000)
+    mcp.run()   # 默认 stdio 传输，适配魔搭托管部署
 
 if __name__ == "__main__":
-    main()
+    import sys
+    # 本地测试时可以用 python server.py --sse 启动 SSE 模式
+    if len(sys.argv) > 1 and sys.argv[1] == "--sse":
+        print("以 SSE 模式启动在 http://0.0.0.0:8000/sse", file=sys.stderr)
+        mcp.run(transport="sse", host="0.0.0.0", port=8000)
+    else:
+        main()
