@@ -2,6 +2,7 @@
 """
 MCP 服务：多源金融资讯采集（默认 STDIO，可选 SSE 本地测试）
 适配魔搭 MCP 广场托管部署要求
+支持用户可选的额外收件邮箱
 """
 
 import sys
@@ -267,13 +268,23 @@ def fetch_recent_news(pages: int = 2) -> list:
             unique.append(item)
     return unique[:100]
 
-# ===================== 邮件发送（环境变量未配时静默跳过）=====================
-def send_email_with_csv_attachment(analysis_time: str, all_data: list):
+# ===================== 邮件发送（支持额外收件人）=====================
+def send_email_with_csv_attachment(analysis_time: str, all_data: list, extra_recipients: Optional[List[str]] = None):
     if not all_data:
         return
-    # 如果未配置邮件参数，直接返回（不会报错，也不阻塞）
-    if not SENDER_EMAIL or not AUTH_CODE or not RECEIVER_EMAILS:
-        print("邮件未发送：FINANCE_SENDER_EMAIL / AUTH_CODE / RECEIVER_EMAILS 未配置", file=sys.stderr)
+    if not SENDER_EMAIL or not AUTH_CODE:
+        print("邮件未发送：FINANCE_SENDER_EMAIL / AUTH_CODE 未配置", file=sys.stderr)
+        return
+
+    # 合并固定收件人与额外收件人（去重）
+    all_recipients = list(RECEIVER_EMAILS)
+    if extra_recipients:
+        all_recipients.extend(extra_recipients)
+    # 去重但不影响顺序
+    final_recipients = list(dict.fromkeys(all_recipients))
+
+    if not final_recipients:
+        print("邮件未发送：没有收件人", file=sys.stderr)
         return
 
     type_counts = Counter(item['type'] for item in all_data)
@@ -307,7 +318,7 @@ def send_email_with_csv_attachment(analysis_time: str, all_data: list):
     csv_content = output.getvalue()
     output.close()
     csv_filename = f"financial_news_{analysis_time.replace(' ', '_').replace(':', '-')}.csv"
-    for receiver in RECEIVER_EMAILS:
+    for receiver in final_recipients:
         msg = MIMEMultipart('mixed')
         msg['Subject'] = f"金融数据采集报告_{analysis_time.replace(' ', '_')}"
         msg['From'] = SENDER_EMAIL
@@ -335,8 +346,11 @@ def collect_all_news(stock_code: str = "002455",
                      ggjj_count: int = 20,
                      ggsd_count: int = 20,
                      company_count: int = 20,
-                     recent_pages: int = 2) -> dict:
-    """采集五种金融资讯源，自动发送邮件报告（需配置邮件环境变量）"""
+                     recent_pages: int = 2,
+                     user_email: str = "") -> dict:
+    """采集五种金融资讯源，自动发送邮件报告。
+       如果提供 user_email，报告将额外发送至该邮箱（环境变量中的固定收件人依然会收到）。
+    """
     analysis_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     all_data = []
     all_data.extend(fetch_guba_posts(stock_code, guba_target))
@@ -344,7 +358,11 @@ def collect_all_news(stock_code: str = "002455",
     all_data.extend(fetch_ggsd_today()[:ggsd_count])
     all_data.extend(fetch_company_news()[:company_count])
     all_data.extend(fetch_recent_news(recent_pages))
-    send_email_with_csv_attachment(analysis_time, all_data)
+
+    # 如果用户提供了邮箱，则作为额外收件人
+    extra_recipients = [user_email] if user_email else None
+    send_email_with_csv_attachment(analysis_time, all_data, extra_recipients)
+
     type_counts = Counter(item['type'] for item in all_data)
     return {"status": "success", "analysis_time": analysis_time,
             "total_items": len(all_data), "type_counts": dict(type_counts)}
