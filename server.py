@@ -52,6 +52,18 @@ SMTP_SERVER    = os.environ.get("FINANCE_SMTP_SERVER", "smtp.163.com")
 SMTP_PORT      = int(os.environ.get("FINANCE_SMTP_PORT", "465"))
 
 # ===================== 工具函数 =====================
+def fix_encoding(text: str) -> str:
+    """
+    修复可能因编码错误导致的乱码。
+    假设原始字符串是 GBK 字节被错误地以 latin-1 解码。
+    """
+    if not text:
+        return text
+    try:
+        return text.encode('latin-1').decode('gbk')
+    except (UnicodeDecodeError, UnicodeEncodeError):
+        return text
+
 def clean_text(text: str) -> str:
     if not text:
         return ""
@@ -73,10 +85,12 @@ def fetch_guba_posts(stock_code: str = "002455", target: int = 50) -> List[dict]
     results = []
     for post in post_list[:target]:
         pid = post.post_id
-        title = getattr(post, "post_title", "")
+        # ★ 修复编码乱码
+        title = fix_encoding(getattr(post, "post_title", ""))
         try:
             detail = comments.getEstMoneyPostDetail(stock_code=stock_code, post_id=pid)
-            content = getattr(detail, "post_content", "")
+            raw_content = getattr(detail, "post_content", "")
+            content = fix_encoding(raw_content)
         except:
             content = ""
         results.append({
@@ -280,7 +294,6 @@ def send_email_with_csv_attachment(analysis_time: str, all_data: list, extra_rec
     all_recipients = list(RECEIVER_EMAILS)
     if extra_recipients:
         all_recipients.extend(extra_recipients)
-    # 去重但不影响顺序
     final_recipients = list(dict.fromkeys(all_recipients))
 
     if not final_recipients:
@@ -359,7 +372,6 @@ def collect_all_news(stock_code: str = "002455",
     all_data.extend(fetch_company_news()[:company_count])
     all_data.extend(fetch_recent_news(recent_pages))
 
-    # 如果用户提供了邮箱，则作为额外收件人
     extra_recipients = [user_email] if user_email else None
     send_email_with_csv_attachment(analysis_time, all_data, extra_recipients)
 
@@ -379,11 +391,10 @@ def crawl_recent_news(pages: int = 2) -> list:
 
 # ===================== 启动入口（默认 STDIO，可选 SSE 用于本地测试）=====================
 def main():
-    mcp.run()   # 默认 stdio 传输，适配魔搭托管部署
+    mcp.run()
 
 if __name__ == "__main__":
     import sys
-    # 本地测试时可以用 python server.py --sse 启动 SSE 模式
     if len(sys.argv) > 1 and sys.argv[1] == "--sse":
         print("以 SSE 模式启动在 http://0.0.0.0:8000/sse", file=sys.stderr)
         mcp.run(transport="sse", host="0.0.0.0", port=8000)
