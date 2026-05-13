@@ -2,7 +2,7 @@
 """
 MCP 服务：多源金融资讯采集（默认 STDIO，可选 SSE 本地测试）
 适配魔搭 MCP 广场托管部署要求
-支持用户可选的额外收件邮箱
+支持用户可选的额外收件邮箱，支持多只股票代码输入（逗号分隔）
 """
 
 import sys
@@ -54,15 +54,50 @@ SMTP_PORT      = int(os.environ.get("FINANCE_SMTP_PORT", "465"))
 # ===================== 工具函数 =====================
 def fix_encoding(text: str) -> str:
     """
-    修复可能因编码错误导致的乱码。
-    假设原始字符串是 GBK 字节被错误地以 latin-1 解码。
+    多策略智能修复因编码错误导致的乱码。
+    自动尝试多种常见错误编码组合，选择中文占比最高的结果。
     """
     if not text:
         return text
+
+    # 计算当前文本的中文字符比例
+    def chinese_ratio(s):
+        if not s:
+            return 0.0
+        cnt = sum(1 for c in s if '\u4e00' <= c <= '\u9fff')
+        return cnt / len(s)
+
+    original_ratio = chinese_ratio(text)
+    best_text = text
+    best_ratio = original_ratio
+
+    # 候选转换方案
+    candidates = []
+    # 1. latin-1 -> gbk
     try:
-        return text.encode('latin-1').decode('gbk')
-    except (UnicodeDecodeError, UnicodeEncodeError):
-        return text
+        candidates.append(text.encode('latin-1').decode('gbk'))
+    except:
+        pass
+    # 2. latin-1 -> utf-8
+    try:
+        candidates.append(text.encode('latin-1').decode('utf-8'))
+    except:
+        pass
+    # 3. cp1252 -> gbk (常见西欧编码)
+    try:
+        candidates.append(text.encode('cp1252').decode('gbk'))
+    except:
+        pass
+
+    for cand in candidates:
+        if not cand:
+            continue
+        ratio = chinese_ratio(cand)
+        if ratio > best_ratio:
+            best_ratio = ratio
+            best_text = cand
+
+    return best_text
 
 def clean_text(text: str) -> str:
     if not text:
@@ -80,12 +115,11 @@ def fetch_guba_posts(stock_code: str = "002455", target: int = 50) -> List[dict]
     try:
         post_list = comments.getEastMoneyPostList(stock_code=stock_code)
     except Exception as e:
-        print(f"股吧列表获取失败: {e}", file=sys.stderr)
+        print(f"股吧列表获取失败 (股票 {stock_code}): {e}", file=sys.stderr)
         return []
     results = []
     for post in post_list[:target]:
         pid = post.post_id
-        # ★ 修复编码乱码
         title = fix_encoding(getattr(post, "post_title", ""))
         try:
             detail = comments.getEstMoneyPostDetail(stock_code=stock_code, post_id=pid)
@@ -99,10 +133,11 @@ def fetch_guba_posts(stock_code: str = "002455", target: int = 50) -> List[dict]
             "content": clean_text(content),
             "post_id": pid,
             "publish_time": getattr(post, "post_publish_time", ""),
-            "source": "东方财富股吧"
+            "source": "东方财富股吧",
+            "stock_code": stock_code
         })
         time.sleep(1.0)
-    print(f"股吧评论获取 {len(results)} 条", file=sys.stderr)
+    print(f"股吧评论获取 {len(results)} 条 (股票 {stock_code})", file=sys.stderr)
     return results
 
 # ===================== 数据源 2：个股聚焦 =====================
@@ -282,7 +317,7 @@ def fetch_recent_news(pages: int = 2) -> list:
             unique.append(item)
     return unique[:100]
 
-# ===================== 邮件发送（支持额外收件人）=====================
+# ===================== 邮件发送 =====================
 def send_email_with_csv_attachment(analysis_time: str, all_data: list, extra_recipients: Optional[List[str]] = None):
     if not all_data:
         return
@@ -290,7 +325,6 @@ def send_email_with_csv_attachment(analysis_time: str, all_data: list, extra_rec
         print("邮件未发送：FINANCE_SENDER_EMAIL / AUTH_CODE 未配置", file=sys.stderr)
         return
 
-    # 合并固定收件人与额外收件人（去重）
     all_recipients = list(RECEIVER_EMAILS)
     if extra_recipients:
         all_recipients.extend(extra_recipients)
@@ -322,7 +356,7 @@ def send_email_with_csv_attachment(analysis_time: str, all_data: list, extra_rec
     html_body = f"""
     <html><head><style>body{{font-family:'Microsoft YaHei',Arial;}}h2{{color:#2c3e50;}}h3{{color:#27ae60;}}ul{{list-style:none;padding:0;}}li{{margin:5px 0;}}.footer{{margin-top:30px;font-size:12px;color:#7f8c8d;}}</style></head>
     <body><h2>📊 多源金融资讯采集报告</h2><p><strong>生成时间：</strong> {analysis_time}</p>{''.join(lines)}<div class="footer"><p>完整数据见附件 <b>financial_news.csv</b></p><p>此邮件由自动化系统生成，仅供参考</p></div></body></html>"""
-    fieldnames = ["type", "title", "content", "url", "publish_time", "source", "post_id"]
+    fieldnames = ["type", "title", "content", "url", "publish_time", "source", "post_id", "stock_code"]
     output = io.StringIO()
     output.write('\ufeff')
     writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction='ignore')
@@ -354,7 +388,7 @@ def send_email_with_csv_attachment(analysis_time: str, all_data: list, extra_rec
 
 # ===================== MCP 工具注册 =====================
 @mcp.tool()
-def collect_all_news(stock_code: str = "002455",
+def collect_all_news(stock_code: str = "",
                      guba_target: int = 50,
                      ggjj_count: int = 20,
                      ggsd_count: int = 20,
@@ -362,11 +396,20 @@ def collect_all_news(stock_code: str = "002455",
                      recent_pages: int = 2,
                      user_email: str = "") -> dict:
     """采集五种金融资讯源，自动发送邮件报告。
-       如果提供 user_email，报告将额外发送至该邮箱（环境变量中的固定收件人依然会收到）。
+       股票代码支持多只，逗号分隔，例如 "002455,000001"。留空默认使用 "002455"。
+       如果提供 user_email，报告将额外发送至该邮箱。
     """
     analysis_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     all_data = []
-    all_data.extend(fetch_guba_posts(stock_code, guba_target))
+
+    if not stock_code:
+        stock_list = ["002455"]
+    else:
+        stock_list = [s.strip() for s in stock_code.split(",") if s.strip()]
+
+    for code in stock_list:
+        all_data.extend(fetch_guba_posts(code, guba_target))
+
     all_data.extend(fetch_ggjj_news()[:ggjj_count])
     all_data.extend(fetch_ggsd_today()[:ggsd_count])
     all_data.extend(fetch_company_news()[:company_count])
@@ -380,16 +423,23 @@ def collect_all_news(stock_code: str = "002455",
             "total_items": len(all_data), "type_counts": dict(type_counts)}
 
 @mcp.tool()
-def crawl_guba(stock_code: str = "002455", target: int = 50) -> list:
-    """单独抓取东方财富股吧帖子"""
-    return fetch_guba_posts(stock_code, target)
+def crawl_guba(stock_code: str = "", target: int = 50) -> list:
+    """单独抓取东方财富股吧帖子。支持多只股票逗号分隔，留空默认 "002455"。"""
+    if not stock_code:
+        stock_list = ["002455"]
+    else:
+        stock_list = [s.strip() for s in stock_code.split(",") if s.strip()]
+    results = []
+    for code in stock_list:
+        results.extend(fetch_guba_posts(code, target))
+    return results
 
 @mcp.tool()
 def crawl_recent_news(pages: int = 2) -> list:
     """单独抓取同花顺要闻"""
     return fetch_recent_news(pages)
 
-# ===================== 启动入口（默认 STDIO，可选 SSE 用于本地测试）=====================
+# ===================== 启动入口 =====================
 def main():
     mcp.run()
 
